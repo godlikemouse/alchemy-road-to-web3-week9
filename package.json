@@ -1,0 +1,10 @@
+{
+    "dependencies": {
+        "browserify": "^17.0.0",
+        "qs": "^6.11.1",
+        "web3": "^1.8.2"
+    },
+    "scripts": {
+        "bundle": "npx browserify ./swap-demo-tutorial-part-1/index.js --standalone bundle -o ./swap-demo-tutorial-part-1/bundle.js"
+    }
+}
