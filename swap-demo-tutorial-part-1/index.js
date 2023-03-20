@@ -1,12 +1,6 @@
-//TODO: Show the percentage breakdown where a swap was sourced from using the
-//  sourcesresponse param (ex: the best price comes from 50% Uniswap, 50% Kyber)
 //TODO: Currently we set the token allowance is set to the max amount. Change
 //  this to be safer so the user only approves just the amount needed.
-//TODO: Calculate price when a user enters new “to” token (right now it only
-//  auto-calculates when a user enters a new "from" token)
-//TODO: Show estimated gas in $
-//TODO: Filter down the long tokens list
-//TODO: Allows users to switch chains and receive a proper quote (remember the
+//TODO: Allow users to switch chains and receive a proper quote (remember the
 //  tokenlist will change as well!)
 
 const qs = require("qs");
@@ -27,74 +21,69 @@ const fromAmount = document.getElementById("from_amount");
 const toAmount = document.getElementById("to_amount");
 const gasEstimate = document.getElementById("gas_estimate");
 const swapButton = document.getElementById("swap_button");
-const apiHost = "goerli.api.0x.org";
+const tokenFilter = document.getElementById("token_filter");
+const sourceEstimate = document.getElementById("source_estimate");
+const apiHost = "api.0x.org";
 
 let currentTrade = {};
 let currentSelectSide;
 let tokens;
+let eth$ = 0;
+const imageCache = {};
 
 async function init() {
     listAvailableTokens();
+    getEthDollarPrice();
+}
+
+async function getEthDollarPrice() {
+    // get current eth in dollars
+    const res = await fetch(
+        "https://min-api.cryptocompare.com/data/price?fsym=ETH&tsyms=USD"
+    );
+    eth$ = (await res.json()).USD;
+}
+
+function renderTokenList(tokens) {
+    tokenList.innerHTML = "";
+    for (const token of tokens) {
+        const div = document.createElement("div");
+        div.className = "token_row";
+
+        const img = imageCache[token.symbol];
+        const html = `<img class="token_list_img" src="${img.src}" />
+            <span class="token_list_text">${token.symbol}</span>`;
+        div.innerHTML = html;
+        div.onclick = () => {
+            selectToken(token);
+        };
+        tokenList.appendChild(div);
+    }
 }
 
 async function listAvailableTokens() {
     console.log("initializing");
-    /*
     const response = await fetch(
         "https://tokens.coingecko.com/uniswap/all.json"
     );
     const tokenListJSON = await response.json();
     console.log("listing available tokens:", tokenListJSON);
-    
-    tokenListJSON.tokens.sort((a, b) => a.symbol.localeCompare(b.symbol));
     tokenListJSON.tokens = tokenListJSON.tokens.filter(
-        (a) => ["TST", "WEENUS"].indexOf(a.symbol) > -1
+        (a) => a.symbol && a.logoURI
     );
-    */
-    const tokenListJSON = {
-        tokens: [
-            {
-                address: "0xb4fbf271143f4fbf7b91a5ded31805e42b2208d6",
-                chainId: 1,
-                decimals: 18,
-                logoURI:
-                    "https://assets.coingecko.com/coins/images/2518/thumb/weth.png?1628852295",
-                name: "Wrapped Ether",
-                symbol: "WETH",
-            },
-            {
-                address: "0x07865c6e87b9f70255377e024ace6630c1eaa37f",
-                chainId: 1,
-                decimals: 6,
-                logoURI:
-                    "https://assets.coingecko.com/coins/images/325/thumb/Tether.png?1668148663",
-                name: "Tether",
-                symbol: "USDT",
-            },
-            {
-                address: "0x63bfb2118771bd0da7a6936667a7bb705a06c1ba",
-                chainId: 1,
-                decimals: 18,
-                logoURI:
-                    "https://assets.coingecko.com/coins/images/877/thumb/chainlink-new-logo.png?1547034700",
-                symbol: "LINK",
-            },
-        ],
-    };
-    const { tokens } = tokenListJSON;
+
+    for (const token of tokenListJSON.tokens) {
+        if (!token.logoURI || !token.symbol) continue;
+        const img = new Image();
+        img.src = token.logoURI;
+        imageCache[token.symbol] = img;
+    }
+
+    tokenListJSON.tokens.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    tokens = tokenListJSON.tokens;
     console.log("tokens:", tokens);
 
-    for (const i in tokens) {
-        const div = document.createElement("div");
-        div.className = "token_row";
-        const html = `<img class="token_list_img" src="${tokens[i].logoURI}" />
-            <span class="token_list_text">${tokens[i].symbol}</span>`;
-        div.innerHTML = html;
-        div.onclick = () => {
-            selectToken(tokens[i]);
-        };
-        tokenList.appendChild(div);
-    }
+    renderTokenList(tokens);
 }
 
 function selectToken(token) {
@@ -126,6 +115,8 @@ async function connect() {
 }
 
 function openModal(side) {
+    tokenFilter.value = "";
+    renderTokenList(tokens);
     currentSelectSide = side;
     tokenModal.style.display = "block";
 }
@@ -134,15 +125,31 @@ function closeModal() {
     tokenModal.style.display = "none";
 }
 
-async function getPrice() {
-    console.log("getting price");
-    if (!currentTrade.from || !currentTrade.to || !fromAmount.value) return;
+function updateEstimatedGas(estimate) {
+    gasEstimate.innerHTML = `${estimate} GWEI, $${(
+        estimate *
+        0.000000001 *
+        eth$
+    ).toFixed(2)}`;
+}
 
-    const amount = Number(fromAmount.value * 10 ** currentTrade.from.decimals);
+async function getPrice(e) {
+    console.log("getting price");
+    const value = e.target.value;
+    if (!currentTrade.from || !currentTrade.to || !value) return;
+
+    let sellToken = currentTrade.from.address;
+    let buyToken = currentTrade.to.address;
+    if (e.target.id == "to_amount") {
+        sellToken = currentTrade.to.address;
+        buyToken = currentTrade.from.address;
+    }
+
+    const sellAmount = Number(value * 10 ** currentTrade.from.decimals);
     const params = {
-        sellToken: currentTrade.from.address,
-        buyToken: currentTrade.to.address,
-        sellAmount: amount,
+        sellToken,
+        buyToken,
+        sellAmount,
     };
 
     // fetch the swap price
@@ -153,20 +160,36 @@ async function getPrice() {
     const swapPriceJSON = await response.json();
     console.info("Estimated Price:", swapPriceJSON);
 
-    toAmount.value = swapPriceJSON.buyAmount / 10 ** currentTrade.to.decimals;
-    gasEstimate.innerHTML = swapPriceJSON.estimatedGas;
+    const updateElement = e.target.id == "from_amount" ? toAmount : fromAmount;
+    updateElement.value =
+        swapPriceJSON.buyAmount / 10 ** currentTrade.to.decimals;
+
+    updateEstimatedGas(swapPriceJSON.estimatedGas);
+
+    //update source estimate
+    const sources = swapPriceJSON.sources.filter(
+        (a) => Number(a.proportion) > 0
+    );
+    const sourcesText = [];
+    for (const source of sources) {
+        sourcesText.push(`${Number(source.proportion) * 100}% ${source.name}`);
+    }
+    sourceEstimate.innerText = sourcesText.join(", ");
 }
 
-async function getQuote(account) {
+async function getQuote(takerAddress) {
     console.log("getting quote");
     if (!currentTrade.from || !currentTrade.to || !fromAmount.value) return;
 
-    const amount = Number(fromAmount.value * 10 ** currentTrade.from.decimals);
+    const sellAmount = Number(
+        fromAmount.value * 10 ** currentTrade.from.decimals
+    );
+
     const params = {
         sellToken: currentTrade.from.address,
         buyToken: currentTrade.to.address,
-        sellAmount: amount,
-        takerAddress: account,
+        sellAmount,
+        takerAddress,
     };
 
     // fetch the swap quote
@@ -178,7 +201,8 @@ async function getQuote(account) {
     console.info("Quote price:", swapQuoteJSON);
 
     toAmount.value = swapQuoteJSON.buyAmount / 10 ** currentTrade.to.decimals;
-    gasEstimate.innerHTML = swapQuoteJSON.estimatedGas;
+
+    updateEstimatedGas(swapQuoteJSON.estimatedGas);
 
     return swapQuoteJSON;
 }
@@ -408,11 +432,27 @@ async function trySwap() {
     console.log("receipt:", receipt);
 }
 
+function onFilterChange(e) {
+    clearTimeout(onFilterChange.interval);
+    onFilterChange.interval = setTimeout(() => {
+        const { value } = e.target;
+        let filteredTokens = tokens;
+        if (value.length > 0) {
+            filteredTokens = tokens.filter(
+                (a) => a?.symbol?.toLowerCase().indexOf(value) > -1
+            );
+        }
+        renderTokenList(filteredTokens);
+    }, 250);
+}
+
 loginButton.onclick = connect;
 fromTokenSelect.onclick = () => openModal("from");
 toTokenSelect.onclick = () => openModal("to");
 modalClose.onclick = closeModal;
 fromAmount.onblur = getPrice;
+toAmount.onblur = getPrice;
 swapButton.onclick = trySwap;
+tokenFilter.onkeyup = onFilterChange;
 
 init();
