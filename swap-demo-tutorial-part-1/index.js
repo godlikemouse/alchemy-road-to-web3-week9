@@ -1,8 +1,3 @@
-//TODO: Currently we set the token allowance is set to the max amount. Change
-//  this to be safer so the user only approves just the amount needed.
-//TODO: Allow users to switch chains and receive a proper quote (remember the
-//  tokenlist will change as well!)
-
 const qs = require("qs");
 const Web3 = require("web3");
 const { default: BigNumber } = require("bignumber.js");
@@ -26,9 +21,12 @@ const sourceEstimate = document.getElementById("source_estimate");
 const apiHost = "api.0x.org";
 
 let currentTrade = {};
+let previousTrade = {};
+let previousForm = {};
 let currentSelectSide;
 let tokens;
 let eth$ = 0;
+let chainId = 1;
 const imageCache = {};
 
 async function init() {
@@ -44,6 +42,27 @@ async function getEthDollarPrice() {
     eth$ = (await res.json()).USD;
 }
 
+function formChanged() {
+    if (
+        JSON.stringify(currentTrade) == JSON.stringify(previousTrade) &&
+        previousForm.fromAmount == fromAmount.value &&
+        previousForm.toAmount == toAmount.value
+    )
+        return false;
+
+    return true;
+}
+
+function resetForm() {
+    fromTokenImage.src = "";
+    fromTokenText.innerHTML = "Select From";
+    toTokenImage.src = "";
+    toTokenText.innerHTML = "Select To";
+    gasEstimate.innerText = "";
+    sourceEstimate.innerText = "";
+    currentTrade = previousTrade = previousForm = {};
+}
+
 function renderTokenList(tokens) {
     tokenList.innerHTML = "";
     for (const token of tokens) {
@@ -56,6 +75,9 @@ function renderTokenList(tokens) {
         div.innerHTML = html;
         div.onclick = () => {
             selectToken(token);
+            getPrice({
+                target: fromAmount,
+            });
         };
         tokenList.appendChild(div);
     }
@@ -68,8 +90,9 @@ async function listAvailableTokens() {
     );
     const tokenListJSON = await response.json();
     console.log("listing available tokens:", tokenListJSON);
+    console.log("filtering tokens by chain:", chainId);
     tokenListJSON.tokens = tokenListJSON.tokens.filter(
-        (a) => a.symbol && a.logoURI
+        (a) => a.symbol && a.logoURI && a.chainId == chainId
     );
 
     for (const token of tokenListJSON.tokens) {
@@ -109,6 +132,19 @@ async function connect() {
         await ethereum.request({ method: "eth_requestAccounts" });
         loginButton.innerHTML = "Connected";
         swapButton.disabled = false;
+        const web3 = new Web3(Web3.givenProvider);
+        chainId = await web3.eth.getChainId();
+        listAvailableTokens();
+        ethereum.on("chainChanged", async () => {
+            const nextChainId = await web3.eth.getChainId();
+            if (nextChainId == chainId) return;
+
+            console.info("new chain selected:", nextChainId);
+
+            chainId = nextChainId;
+            listAvailableTokens();
+            resetForm();
+        });
     } else {
         loginButton.innerHTML = "Please install MetaMask";
     }
@@ -119,6 +155,7 @@ function openModal(side) {
     renderTokenList(tokens);
     currentSelectSide = side;
     tokenModal.style.display = "block";
+    tokenFilter.focus();
 }
 
 function closeModal() {
@@ -126,7 +163,7 @@ function closeModal() {
 }
 
 function updateEstimatedGas(estimate) {
-    gasEstimate.innerHTML = `${estimate} GWEI, $${(
+    gasEstimate.innerHTML = `${estimate} Gwei, $${(
         estimate *
         0.000000001 *
         eth$
@@ -134,6 +171,8 @@ function updateEstimatedGas(estimate) {
 }
 
 async function getPrice(e) {
+    if (!formChanged()) return false;
+
     console.log("getting price");
     const value = e.target.value;
     if (!currentTrade.from || !currentTrade.to || !value) return;
@@ -175,6 +214,9 @@ async function getPrice(e) {
         sourcesText.push(`${Number(source.proportion) * 100}% ${source.name}`);
     }
     sourceEstimate.innerText = sourcesText.join(", ");
+
+    previousTrade = { ...currentTrade };
+    previousForm = { fromAmount: fromAmount.value, toAmount: toAmount.value };
 }
 
 async function getQuote(takerAddress) {
@@ -419,7 +461,9 @@ async function trySwap() {
 
     console.log("setup ERC20TokenContract:", ERC20TokenContract);
 
-    const maxApproval = new BigNumber(2).pow(256).minus(1);
+    const maxApproval = web3.utils.toWei(fromAmount.value);
+
+    //const maxApproval = new BigNumber(2).pow(256).minus(1);
 
     ERC20TokenContract.methods
         .approve(swapQuoteJSON.allowanceTarget, maxApproval)
