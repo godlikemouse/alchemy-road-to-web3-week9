@@ -1,10 +1,12 @@
 {
     "dependencies": {
         "browserify": "^17.0.0",
+        "http-server": "^14.1.1",
         "qs": "^6.11.1",
         "web3": "^1.8.2"
     },
     "scripts": {
-        "bundle": "npx browserify ./swap-demo-tutorial-part-1/index.js --standalone bundle -o ./swap-demo-tutorial-part-1/bundle.js"
+        "build": "npx browserify ./swap-demo-tutorial/index.js --standalone bundle -o ./swap-demo-tutorial/bundle.js",
+        "start": "npm run build && http-server swap-demo-tutorial -p 3000"
     }
 }
